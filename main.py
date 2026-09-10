@@ -16,13 +16,10 @@ def extract_words(text: str) -> list[str]:
 
 def build_dictionary() -> None:
     global word_counter
-    files = [f for f in os.listdir(SOURCE_DIR) if f.lower().endswith('.txt')]
-    for i, name in enumerate(files, 1):
-        print(f"  [{i}/{len(files)}] {name}")
-        with open(os.path.join(SOURCE_DIR, name), encoding='utf-8') as f:
-            word_counter.update(extract_words(f.read()))
-    print(f"Всего слов: {sum(word_counter.values()):,}")
-    print(f"Уникальных слов: {len(word_counter):,}")
+    for name in os.listdir(SOURCE_DIR):
+        if name.lower().endswith('.txt'):
+            with open(os.path.join(SOURCE_DIR, name), encoding='utf-8') as f:
+                word_counter.update(extract_words(f.read()))
 
 
 def load_dictionary() -> None:
@@ -33,66 +30,60 @@ def load_dictionary() -> None:
 
 def save_dictionary() -> None:
     with open(DICT_FILE, 'w', encoding='utf-8') as f:
-        json.dump(dict(word_counter), f, ensure_ascii=False, indent=2)
+        json.dump(dict(word_counter), f, ensure_ascii=False)
 
 
 def print_statistics() -> None:
     total = sum(word_counter.values())
-    print("\n" + "=" * 60)
-    print("СТАТИСТИКА")
-    print("=" * 60)
-    print(f"Всего слов: {total:,}")
-    print(f"Различных слов: {len(word_counter):,}")
+    print(f"Всего слов: {total}")
+    print(f"Различных слов: {len(word_counter)}")
 
     print("\nТоп-10 слов:")
-    for i, (w, n) in enumerate(word_counter.most_common(10), 1):
-        print(f"  {i:2d}. {w:15s} - {n:8,d} ({n / total * 100:.3f}%)")
+    for w, n in word_counter.most_common(10):
+        print(f"  {w} - {n}")
 
     letters = Counter(c for w, n in word_counter.items() for c in w for _ in range(n))
     print("\nТоп-10 букв:")
-    for i, (c, n) in enumerate(letters.most_common(10), 1):
-        print(f"  {i:2d}. {c:5s} - {n:8,d} ({n / sum(letters.values()) * 100:.3f}%)")
-    print("=" * 60)
+    for c, n in letters.most_common(10):
+        print(f"  {c} - {n}")
 
 
 def candidates(word: str) -> set[str]:
-    """Все слова из словаря на расстоянии 1 (вставка/удаление/замена/перестановка)."""
+    """Слова из словаря на расстоянии 1 от данного."""
     word = word.lower()
     result = set()
     for i in range(len(word) + 1):
         for c in RUSSIAN_ALPHABET:
-            result.add(word[:i] + c + word[i:])          # вставка
+            result.add(word[:i] + c + word[i:])
     for i in range(len(word)):
-        result.add(word[:i] + word[i + 1:])              # удаление
+        result.add(word[:i] + word[i + 1:])
         for c in RUSSIAN_ALPHABET:
-            result.add(word[:i] + c + word[i + 1:])      # замена
+            result.add(word[:i] + c + word[i + 1:])
         if i + 1 < len(word):
-            result.add(word[:i] + word[i + 1] + word[i] + word[i + 2:])  # перестановка
+            result.add(word[:i] + word[i + 1] + word[i] + word[i + 2:])
     return result & word_counter.keys()
 
 
 def check_word(word: str) -> None:
-    print("-" * 60)
-    print(f"Слово: '{word}'")
-    if word.lower() in word_counter:
-        print(f"  Правильно. Частота: {word_counter[word.lower()]:,}")
+    key = word.lower()
+    if key in word_counter:
+        print(f"'{word}' - правильно, частота: {word_counter[key]}")
+        return
+    fixes = sorted(((w, word_counter[w]) for w in candidates(key)),
+                   key=lambda x: -x[1])
+    if fixes:
+        print(f"'{word}' - не найдено, исправления:")
+        for w, n in fixes:
+            print(f"  {w} - {n}")
     else:
-        fixes = sorted(((w, word_counter[w]) for w in candidates(word)),
-                       key=lambda x: -x[1])
-        if fixes:
-            print("  Варианты исправления:")
-            for i, (w, n) in enumerate(fixes, 1):
-                print(f"    {i:2d}. {w:20s} ({n:,})")
-        else:
-            print("  Исправлений не найдено.")
-    print("-" * 60)
+        print(f"'{word}' - не найдено, исправлений нет")
 
 
 def main() -> None:
-    if os.path.exists(DICT_FILE) and input("Использовать словарь? (y/n): ").lower() == 'y':
+    if os.path.exists(DICT_FILE) and input("Использовать словарь? (д/н): ").lower() == 'д':
         load_dictionary()
     else:
-        print("Создаём словарь...")
+        print("\nСоздаём словарь...")
         build_dictionary()
         if not word_counter:
             print("Пусто.")
@@ -100,13 +91,8 @@ def main() -> None:
         save_dictionary()
     print_statistics()
 
-    while (word := input("\nСлово (exit/stats/reload): ").strip().lower()) not in ('exit', 'quit', 'q'):
-        if word == 'stats':
-            print_statistics()
-        elif word == 'reload':
-            load_dictionary()
-        elif word:
-            check_word(word)
+    while (word := input("Слово: ").strip()) not in ('exit', 'quit', 'q', ''):
+        check_word(word)
 
 
 main()
