@@ -13,7 +13,6 @@ def extract_words(text: str) -> list[str]:
 
 
 def create_dict(folder: str) -> Counter:
-    """Читает все .txt из папки и возвращает частотный словарь."""
     counter = Counter()
     for name in os.listdir(folder):
         if name.lower().endswith('.txt'):
@@ -48,12 +47,12 @@ def print_statistics(counter: Counter) -> None:
 
 
 def candidates(counter: Counter, key_word: str) -> set[str]:
-    """Слова из словаря на расстоянии 1 от данного."""
     key_word = key_word.lower()
     result = set()
     for i in range(len(key_word) + 1):
         for c in RUSSIAN_ALPHABET:
             result.add(key_word[:i] + c + key_word[i:])                 # вставка
+            
     for i in range(len(key_word)):
         result.add(key_word[:i] + key_word[i + 1:])                     # удаление
         for c in RUSSIAN_ALPHABET:
