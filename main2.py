@@ -2,6 +2,7 @@ import json
 from collections import Counter
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import pymorphy3
 
 
@@ -114,26 +115,34 @@ def zipf_constant(words: Counter) -> float:
     return sum(values) / len(values)
 
 
-def plot_zipf(dictionaries: dict[str, Counter]) -> None:
-    """Строит лог-лог графики зависимости частоты слова от его ранга.
 
-    Для каждого словаря — отдельная фигура, сохраняется в
-    zipf_<имя словаря>.png и показывается на экране.
-    """
+
+
+def plot_zipf(dictionaries: dict[str, Counter]) -> None:
+    """Строит диаграммы зависимости частоты слова от его ранга."""
+
+    def plot_formatter(x, _):
+        if x >= 1:
+            return f"{int(x):,}".replace(",", " ")
+        return f"{x:g}"
+
     for name, dictionary in dictionaries.items():
         items = dictionary.most_common()
-        # Ранги: 1, 2, 3, ... по убыванию частоты
         ranks = list(range(1, len(items) + 1))
-        # Соответствующие частоты
         frequencies = [count for _, count in items]
 
         plt.figure(figsize=(10, 6))
-        # loglog — обе оси в логарифмическом масштабе (закон Зипфа — прямая)
         plt.loglog(ranks, frequencies, marker=".", linestyle="none")
         plt.xlabel("Ранг слова")
         plt.ylabel("Частота")
         plt.title(f"Закон Зипфа: {name}")
         plt.grid(True, which="both", alpha=0.3)
+
+        # Обычные числа вместо степеней 10 — и для savefig, и для show
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(FuncFormatter(plot_formatter))
+        ax.yaxis.set_major_formatter(FuncFormatter(plot_formatter))
+
         plt.tight_layout()
         plt.savefig(f"zipf_{name}.png", dpi=150)
         plt.show()
