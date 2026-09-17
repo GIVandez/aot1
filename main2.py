@@ -6,15 +6,10 @@ from matplotlib.ticker import FuncFormatter
 import pymorphy3
 
 
-# Имя файла со словарём словоформ (результат задания №1)
 DICT_FILE = "dictionary.json"
-# Файл со стоп-словами (одно слово на строку, строки с # — комментарии)
 STOP_WORDS_FILE = "stop_words.txt"
-# Сколько слов показывать в топе
 TOP_N = 40
 
-# Единственный экземпляр морфоанализатора — создаём один раз,
-# так как инициализация pymorphy3 довольно тяжёлая.
 morph = pymorphy3.MorphAnalyzer()
 
 
@@ -24,30 +19,14 @@ def load_dict(path: str) -> Counter:
 
 
 def save_dict(counter: Counter, path: str) -> None:
-    """Сохраняет счётчик в JSON-файл (ключ — слово, значение — частота).
-
-    dict(counter) нужен, потому что json не умеет сериализовать Counter напрямую.
-    ensure_ascii=False — чтобы кириллица оставалась читаемой.
-    """
     with open(path, "w", encoding="utf-8") as file:
         json.dump(dict(counter), file, ensure_ascii=False, indent=2)
 
 
 def load_stop_words(path: str) -> set[str]:
-    """Загружает стоп-слова из файла.
-
-    Формат: одно слово на строку.
-    Строки, начинающиеся с '#', и пустые строки игнорируются.
-    Слова приводятся к нижнему регистру.
-    Если файл не найден — возвращается пустое множество (стоп-слов нет).
-    """
     try:
         with open(path, encoding="utf-8") as file:
-            return {
-                line.strip().lower()
-                for line in file
-                if line.strip() and not line.startswith("#")
-            }
+            return {line.strip().lower() for line in file}
     except FileNotFoundError:
         return set()
 
@@ -144,25 +123,25 @@ def plot_zipf(dictionaries: dict[str, Counter]) -> None:
         ax.yaxis.set_major_formatter(FuncFormatter(plot_formatter))
 
         plt.tight_layout()
-        plt.savefig(f"zipf_{name}.png", dpi=150)
+        plt.savefig(f"plot_{name}.png", dpi=150)
         plt.show()
 
 
 def main() -> None:
-    # 1. Загружаем словарь словоформ (Словарь 1)
+    # Загружаем словарь словоформ (Словарь 1)
     try:
         word_forms = load_dict(DICT_FILE)
     except FileNotFoundError:
         print(f"Не найден файл словаря")
         return
 
-    # 2. Загружаем стоп-слова (может быть пустым множеством)
+    # Загружаем стоп-слова (может быть пустым множеством)
     stop_words = load_stop_words(STOP_WORDS_FILE)
 
-    # 3. Строим Словарь 2 — леммы
+    # Строим Словарь 2 — леммы
     lemmas = to_lemmas(word_forms)
 
-    # 4. Словари 3 и 4 — без стоп-слов
+    # Словари 3 и 4 — без стоп-слов
     word_forms_no_stop_words = remove_stop_words(word_forms, stop_words)
     lemmas_no_stop_words = remove_stop_words(lemmas, stop_words)
 
@@ -179,24 +158,15 @@ def main() -> None:
     save_dict(word_forms_no_stop_words, "dictionary_3_no_stop_words.json")
     save_dict(lemmas_no_stop_words, "dictionary_4_lemmas_no_stop_words.json")
 
-    # 5. Сравниваем топ-40 по всем словарям
+    # Сравниваем топ-40 по всем словарям
     print_comparison(dictionaries)
 
-    # 6. Считаем и выводим константу Зипфа
+    # Считаем и выводим константу Зипфа
     print("\nКонстанты Зипфа:")
     for name, dictionary in dictionaries.items():
         print(f"  {name}: {zipf_constant(dictionary):.2f}")
 
-    # 7. Общая статистика по каждому словарю
-    print("\nСтатистика:")
-    for name, dictionary in dictionaries.items():
-        print(
-            f"  {name}: "
-            f"{sum(dictionary.values())} вхождений, "
-            f"{len(dictionary)} различных слов"
-        )
-
-    # 8. Строим графики закона Зипфа
+    # Строим графики закона Зипфа
     plot_zipf(dictionaries)
 
 
