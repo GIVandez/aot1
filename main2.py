@@ -1,5 +1,4 @@
 import json
-import math
 from collections import Counter
 
 import matplotlib.pyplot as plt
@@ -50,11 +49,11 @@ def to_lemmas(words: Counter) -> Counter:
 
 def remove_stop_words(words: Counter, stop_words: set[str]) -> Counter:
     """Удаляет стоп-слова из частотного словаря."""
-    return Counter(
-        (word, count)
+    return Counter({
+        word: count
         for word, count in words.items()
         if word not in stop_words
-    )
+    })
 
 
 def top_words(words: Counter, n: int = TOP_N) -> list[tuple[str, int]]:
