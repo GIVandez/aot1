@@ -35,8 +35,8 @@ def to_lemmas(words: Counter) -> Counter:
     lemmas = Counter()
 
     for word, count in words.items():
-        # parse возвращает список возможных разборов слова; [0] — самая вероятная
-        # .normal_form — лемма (начальная форма) слова
+        # parse возвращает список возможных разборов слова; [0] - самая вероятная
+        # .normal_form - лемма (начальная форма) слова
         lemma = morph.parse(word)[0].normal_form
         lemmas[lemma] += count
 
@@ -72,7 +72,7 @@ def print_comparison(dictionaries: dict[str, Counter]) -> None:
             if rank < len(items):
                 word, count = items[rank]
                 cell = f"{word}: {count}"          # например "и: 37620"
-                print(f"{cell[:20]:<{20}}", end="")  # обрезаем до W и дополняем до W
+                print(f"{cell[:20]:<{20}}", end="")  # обрезаем до 20 и дополняем до 20
             else:
                 print(f"{'-':<{20}}", end="")
         print()
@@ -98,32 +98,45 @@ def zipf_constant(words: Counter) -> float:
 
 
 def plot_zipf(dictionaries: dict[str, Counter]) -> None:
-    """Строит диаграммы зависимости частоты слова от его ранга."""
+    """Строит полную диаграмму и диаграмму для рангов 0–40 для каждого словаря."""
 
-    def plot_formatter(x, _):
+    def fmt(x, _):
         if x >= 1:
             return f"{int(x):,}".replace(",", " ")
         return f"{x:g}"
+
+    def setup_axes():
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt))
+        ax.yaxis.set_major_formatter(FuncFormatter(fmt))
 
     for name, dictionary in dictionaries.items():
         items = dictionary.most_common()
         ranks = list(range(1, len(items) + 1))
         frequencies = [count for _, count in items]
 
+        # --- 1. Полная диаграмма ---
         plt.figure(figsize=(10, 6))
         plt.loglog(ranks, frequencies, marker=".", linestyle="none")
         plt.xlabel("Ранг слова")
         plt.ylabel("Частота")
-        plt.title(f"Закон Зипфа: {name}")
+        plt.title(f"Закон Зипфа (полная): {name}")
         plt.grid(True, which="both", alpha=0.3)
-
-        # Обычные числа вместо степеней 10 — и для savefig, и для show
-        ax = plt.gca()
-        ax.xaxis.set_major_formatter(FuncFormatter(plot_formatter))
-        ax.yaxis.set_major_formatter(FuncFormatter(plot_formatter))
-
+        setup_axes()
         plt.tight_layout()
-        plt.savefig(f"plot_{name}.png", dpi=150)
+        plt.savefig(f"zipf_full_{name}.png", dpi=150)
+        plt.show()
+
+        # --- 2. Диаграмма для рангов 0–40 ---
+        n = 40
+        plt.figure(figsize=(10, 6))
+        plt.plot(ranks[:n], frequencies[:n], marker="o")   # линейный масштаб
+        plt.xlabel("Ранг слова")
+        plt.ylabel("Частота")
+        plt.title(f"Закон Зипфа (ранги 0–40): {name}")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(f"zipf_top40_{name}.png", dpi=150)
         plt.show()
 
 
@@ -135,13 +148,13 @@ def main() -> None:
         print(f"Не найден файл словаря")
         return
 
-    # Загружаем стоп-слова (может быть пустым множеством)
+    # Стоп-слова
     stop_words = load_stop_words(STOP_WORDS_FILE)
 
-    # Строим Словарь 2 — леммы
+    # Словарь 2 - леммы
     lemmas = to_lemmas(word_forms)
 
-    # Словари 3 и 4 — без стоп-слов
+    # Словари 3 и 4 - без стоп-слов
     word_forms_no_stop_words = remove_stop_words(word_forms, stop_words)
     lemmas_no_stop_words = remove_stop_words(lemmas, stop_words)
 
