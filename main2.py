@@ -78,17 +78,9 @@ def print_comparison(dictionaries: dict[str, Counter]) -> None:
         print()
 
 
-def zipf_constant(words: Counter) -> float:
-    """Оценка константы Зипфа C ≈ среднее(r * f(r)).
-
-    По закону Зипфа f(r) ~ C / r, то есть произведение r * f(r)
-    примерно постоянно. Здесь берём среднее по всем рангам
-    как грубую оценку C.
-    """
+def zipf_constant(words: Counter, N: int) -> float:
     if not words:
         return 0.0
-
-    # r * f(r) для каждого ранга r (нумерация с 1)
     values = [rank * count for rank, (_, count) in enumerate(words.most_common(), start=1)]
 
     return sum(values) / len(values)
@@ -97,8 +89,7 @@ def zipf_constant(words: Counter) -> float:
 
 
 
-def plot_zipf(dictionaries: dict[str, Counter]) -> None:
-    """Строит полную диаграмму и диаграмму для рангов 0–40 для каждого словаря."""
+def plot_zipf(dictionaries: dict[str, Counter], N: int) -> None:
 
     def fmt(x, _):
         if x >= 1:
@@ -113,7 +104,7 @@ def plot_zipf(dictionaries: dict[str, Counter]) -> None:
     for name, dictionary in dictionaries.items():
         items = dictionary.most_common()
         ranks = list(range(1, len(items) + 1))
-        frequencies = [count for _, count in items]
+        frequencies = [count / N for _, count in items]
 
         # --- 1. Полная диаграмма ---
         plt.figure(figsize=(10, 6))
@@ -148,6 +139,8 @@ def main() -> None:
         print(f"Не найден файл словаря")
         return
 
+    N = sum(word_forms.values())
+
     # Стоп-слова
     stop_words = load_stop_words(STOP_WORDS_FILE)
 
@@ -177,10 +170,10 @@ def main() -> None:
     # Считаем и выводим константу Зипфа
     print("\nКонстанты Зипфа:")
     for name, dictionary in dictionaries.items():
-        print(f"  {name}: {zipf_constant(dictionary):.2f}")
+        print(f"  {name}: {zipf_constant(dictionary, N):.6f}")
 
     # Строим графики закона Зипфа
-    plot_zipf(dictionaries)
+    plot_zipf(dictionaries, N)
 
 
 
