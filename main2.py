@@ -4,6 +4,7 @@ from collections import Counter
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import pymorphy3
+import numpy as np
 
 
 DICT_FILE = "dictionary.json"
@@ -78,13 +79,28 @@ def print_comparison(dictionaries: dict[str, Counter]) -> None:
         print()
 
 
+
 def zipf_constant(words: Counter, N: int) -> float:
+    # Вычисляет относительную константу Зипфа методом МНК без логарифмирования,
+    # строго по формуле аппроксимации функции y = c/x.
     if not words:
         return 0.0
-    values = [rank * count for rank, (_, count) in enumerate(words.most_common(), start=1)]
-
-    return sum(values) / len(values)
-
+    
+    # 1. Формируем массивы рангов (x) и относительных частот (y)
+    items = words.most_common()
+    ranks = np.arange(1, len(items) + 1)                       # x_i
+    frequencies = np.array([count / N for _, count in items])  # y_i
+    
+    # 2. Считаем числитель: сумма (y_i / x_i)
+    numerator = np.sum(frequencies / ranks)
+    
+    # 3. Считаем знаменатель: сумма (1 / x_i^2)
+    denominator = np.sum(1 / (ranks ** 2))
+    
+    # 4. Находим константу c
+    c_relative = numerator / denominator
+    
+    return float(c_relative)
 
 
 
@@ -106,29 +122,29 @@ def plot_zipf(dictionaries: dict[str, Counter], N: int) -> None:
         ranks = list(range(1, len(items) + 1))
         frequencies = [count / N for _, count in items]
 
-        # --- 1. Полная диаграмма ---
-        plt.figure(figsize=(10, 6))
-        plt.loglog(ranks, frequencies, marker=".", linestyle="none")
-        plt.xlabel("Ранг слова")
-        plt.ylabel("Частота")
-        plt.title(f"Закон Зипфа (полная): {name}")
-        plt.grid(True, which="both", alpha=0.3)
-        setup_axes()
-        plt.tight_layout()
-        plt.savefig(f"zipf_full_{name}.png", dpi=150)
-        plt.show()
-
-        # --- 2. Диаграмма для рангов 0–40 ---
-        n = 40
-        plt.figure(figsize=(10, 6))
-        plt.plot(ranks[:n], frequencies[:n], marker="o")   # линейный масштаб
-        plt.xlabel("Ранг слова")
-        plt.ylabel("Частота")
-        plt.title(f"Закон Зипфа (ранги 0–40): {name}")
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(f"zipf_top40_{name}.png", dpi=150)
-        plt.show()
+    #    # --- 1. Полная диаграмма ---
+    #    plt.figure(figsize=(10, 6))
+    #    plt.loglog(ranks, frequencies, marker=".", linestyle="none")
+    #    plt.xlabel("Ранг слова")
+    #    plt.ylabel("Частота")
+    #    plt.title(f"Закон Зипфа (полная): {name}")
+    #    plt.grid(True, which="both", alpha=0.3)
+    #    setup_axes()
+    #    plt.tight_layout()
+    #    plt.savefig(f"zipf_full_{name}.png", dpi=150)
+    #    plt.show()
+#
+    #    # --- 2. Диаграмма для рангов 0–40 ---
+    #    n = 40
+    #    plt.figure(figsize=(10, 6))
+    #    plt.plot(ranks[:n], frequencies[:n], marker="o")   # линейный масштаб
+    #    plt.xlabel("Ранг слова")
+    #    plt.ylabel("Частота")
+    #    plt.title(f"Закон Зипфа (ранги 0–40): {name}")
+    #    plt.grid(True, alpha=0.3)
+    #    plt.tight_layout()
+    #    plt.savefig(f"zipf_top40_{name}.png", dpi=150)
+    #    plt.show()
 
 
 def main() -> None:
