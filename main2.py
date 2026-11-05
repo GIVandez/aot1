@@ -4,17 +4,13 @@ from collections import Counter
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import pymorphy3
+import numpy as np
 
 
-# Имя файла со словарём словоформ (результат задания №1)
 DICT_FILE = "dictionary.json"
-# Файл со стоп-словами (одно слово на строку, строки с # — комментарии)
 STOP_WORDS_FILE = "stop_words.txt"
-# Сколько слов показывать в топе
 TOP_N = 40
 
-# Единственный экземпляр морфоанализатора — создаём один раз,
-# так как инициализация pymorphy3 довольно тяжёлая.
 morph = pymorphy3.MorphAnalyzer()
 
 
@@ -24,20 +20,22 @@ def load_dict(path: str) -> Counter:
 
 
 def save_dict(counter: Counter, path: str) -> None:
+<<<<<<< HEAD
     """Сохраняет счётчик в JSON-файл (ключ — слово, значение — частота)."""
+=======
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
     with open(path, "w", encoding="utf-8") as file:
         json.dump(dict(counter), file, ensure_ascii=False, indent=2)
 
 
 def load_stop_words(path: str) -> set[str]:
+<<<<<<< HEAD
     """Загружает стоп-слова из файла."""
+=======
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
     try:
         with open(path, encoding="utf-8") as file:
-            return {
-                line.strip().lower()
-                for line in file
-                if line.strip() and not line.startswith("#")
-            }
+            return {line.strip().lower() for line in file}
     except FileNotFoundError:
         return set()
 
@@ -46,6 +44,11 @@ def to_lemmas(words: Counter) -> Counter:
     """Строит Словарь 2 — частотный словарь лемм."""
     lemmas = Counter()
     for word, count in words.items():
+<<<<<<< HEAD
+=======
+        # parse возвращает список возможных разборов слова; [0] - самая вероятная
+        # .normal_form - лемма (начальная форма) слова
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
         lemma = morph.parse(word)[0].normal_form
         lemmas[lemma] += count
     return lemmas
@@ -80,13 +83,19 @@ def print_comparison(dictionaries: dict[str, Counter]) -> None:
             items = tops[name]
             if rank < len(items):
                 word, count = items[rank]
+<<<<<<< HEAD
                 cell = f"{word}: {count}"
                 print(f"{cell[:col_width]:<{col_width}}", end="")
+=======
+                cell = f"{word}: {count}"          # например "и: 37620"
+                print(f"{cell[:20]:<{20}}", end="")  # обрезаем до 20 и дополняем до 20
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
             else:
                 print(f"{'-':<{col_width}}", end="")
         print()
 
 
+<<<<<<< HEAD
 def zipf_constant(words: Counter) -> float:
     """Расчет константы Зипфа
     
@@ -105,23 +114,65 @@ def zipf_constant(words: Counter) -> float:
     if denominator == 0:
         return 0.0
     return numerator / denominator
+=======
+
+def zipf_constant(words: Counter, N: int) -> float:
+    # Вычисляет относительную константу Зипфа методом МНК без логарифмирования,
+    # строго по формуле аппроксимации функции y = c/x.
+    if not words:
+        return 0.0
+    
+    # 1. Формируем массивы рангов (x) и относительных частот (y)
+    items = words.most_common()
+    ranks = np.arange(1, len(items) + 1)                       # x_i
+    frequencies = np.array([count / N for _, count in items])  # y_i
+    
+    # 2. Считаем числитель: сумма (y_i / x_i)
+    numerator = np.sum(frequencies / ranks)
+    
+    # 3. Считаем знаменатель: сумма (1 / x_i^2)
+    denominator = np.sum(1 / (ranks ** 2))
+    
+    # 4. Находим константу c
+    c_relative = numerator / denominator
+    
+    return float(c_relative)
 
 
+
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
+
+def plot_zipf(dictionaries: dict[str, Counter], N: int) -> None:
+
+<<<<<<< HEAD
 def plot_zipf(dictionaries: dict[str, Counter]) -> None:
     """Строит две диаграммы Зипфа на каждый словарь."""
     def plot_formatter(x, _):
+=======
+    def fmt(x, _):
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
         if x >= 1:
             return f"{int(x):,}".replace(",", " ")
         return f"{x:g}"
 
+<<<<<<< HEAD
     fig_full, axes_full = plt.subplots(2, 2, figsize=(14, 10))
     fig_top40, axes_top40 = plt.subplots(2, 2, figsize=(14, 10))
 
     for i, (name, dictionary) in enumerate(dictionaries.items()):
+=======
+    def setup_axes():
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt))
+        ax.yaxis.set_major_formatter(FuncFormatter(fmt))
+
+    for name, dictionary in dictionaries.items():
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
         items = dictionary.most_common()
         ranks = list(range(1, len(items) + 1))
-        frequencies = [count for _, count in items]
+        frequencies = [count / N for _, count in items]
 
+<<<<<<< HEAD
         c = zipf_constant(dictionary)
 
         # ---------- 1. Полная диаграмма (лог-лог) ----------
@@ -164,16 +215,58 @@ def plot_zipf(dictionaries: dict[str, Counter]) -> None:
 
 
 def main() -> None:
+=======
+    #    # --- 1. Полная диаграмма ---
+    #    plt.figure(figsize=(10, 6))
+    #    plt.loglog(ranks, frequencies, marker=".", linestyle="none")
+    #    plt.xlabel("Ранг слова")
+    #    plt.ylabel("Частота")
+    #    plt.title(f"Закон Зипфа (полная): {name}")
+    #    plt.grid(True, which="both", alpha=0.3)
+    #    setup_axes()
+    #    plt.tight_layout()
+    #    plt.savefig(f"zipf_full_{name}.png", dpi=150)
+    #    plt.show()
+#
+    #    # --- 2. Диаграмма для рангов 0–40 ---
+    #    n = 40
+    #    plt.figure(figsize=(10, 6))
+    #    plt.plot(ranks[:n], frequencies[:n], marker="o")   # линейный масштаб
+    #    plt.xlabel("Ранг слова")
+    #    plt.ylabel("Частота")
+    #    plt.title(f"Закон Зипфа (ранги 0–40): {name}")
+    #    plt.grid(True, alpha=0.3)
+    #    plt.tight_layout()
+    #    plt.savefig(f"zipf_top40_{name}.png", dpi=150)
+    #    plt.show()
+
+
+def main() -> None:
+    # Загружаем словарь словоформ (Словарь 1)
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
     try:
         word_forms = load_dict(DICT_FILE)
     except FileNotFoundError:
         print(f"Не найден файл словаря: {DICT_FILE}")
         return
 
+<<<<<<< HEAD
     stop_words = load_stop_words(STOP_WORDS_FILE)
     lemmas = to_lemmas(word_forms)
 
     word_forms_no_stop_words = remove_stop_words(word_forms, stop_words, by_lemma=True)
+=======
+    N = sum(word_forms.values())
+
+    # Стоп-слова
+    stop_words = load_stop_words(STOP_WORDS_FILE)
+
+    # Словарь 2 - леммы
+    lemmas = to_lemmas(word_forms)
+
+    # Словари 3 и 4 - без стоп-слов
+    word_forms_no_stop_words = remove_stop_words(word_forms, stop_words)
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
     lemmas_no_stop_words = remove_stop_words(lemmas, stop_words)
 
     dictionaries = {
@@ -187,6 +280,7 @@ def main() -> None:
     save_dict(word_forms_no_stop_words, "dictionary_3_no_stop_words.json")
     save_dict(lemmas_no_stop_words, "dictionary_4_lemmas_no_stop_words.json")
 
+<<<<<<< HEAD
     print_comparison(dictionaries)
 
     print("\nКОНСТАНТЫ ЗИПФА (по формуле со слайда, МНК для y = C/x):")
@@ -199,6 +293,18 @@ def main() -> None:
         print(f"  {name}: {sum(dictionary.values())} вхождений, {len(dictionary)} различных слов")
 
     plot_zipf(dictionaries)
+=======
+    # Сравниваем топ-40 по всем словарям
+    print_comparison(dictionaries)
+
+    # Считаем и выводим константу Зипфа
+    print("\nКонстанты Зипфа:")
+    for name, dictionary in dictionaries.items():
+        print(f"  {name}: {zipf_constant(dictionary, N):.6f}")
+
+    # Строим графики закона Зипфа
+    plot_zipf(dictionaries, N)
+>>>>>>> 1b49848ac7b55ff7e5d0cc2012291773ebaa3160
 
 
 if __name__ == "__main__":
