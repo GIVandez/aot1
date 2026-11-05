@@ -28,16 +28,23 @@ nlp = spacy_udpipe.load_from_path(lang="ru", path=MODEL_PATH, meta={"description
 print("Модель готова к работе\n")
 
 
+# Глаголы-связки для составного именного сказуемого в творительном падеже
 COPULAS = {"стать", "быть", "казаться", "оказаться", "являться", "называть", "считать", "сделаться", "остаться"}
 
 
 def analyze_sentence(text, index):
+    # Удаляем тире, чтобы парсер не делал его корнем (ROOT).
+    # Для предложений с нулевой связкой: "Мой брат — студент".
     text_clean = re.sub(r"\s+[—–]\s+", " ", text).strip()
     doc = nlp(text_clean)
 
+    # Вспомогательная функция для приведения dep_ к нижнему регистру,
+    # так как spacy_udpipe возвращает ROOT заглавными, а остальное — строчными.
     def dep(tok):
         return tok.dep_.lower()
 
+    # Склейка слов, разделённых дефисом (кто-то, кое-кто, что-нибудь).
+    # UDPipe разбивает их на два токена с зависимостью fixed/goeswith.
     def get_full_word(tok):
         parts = [tok.text]
         for child in tok.children:
@@ -51,21 +58,25 @@ def analyze_sentence(text, index):
         parts_sorted = sorted(set(parts), key=lambda w: text_clean.find(w))
         return "".join(parts_sorted)
 
-    # --- 1. Подлежащие (с фильтром для конструкций "нет + Gen") ---
+    # --- 1. Подлежащие ---
     subject_deps = {"nsubj", "csubj", "nsubjpass", "csubjpass"}
     base_subjects = [token for token in doc if dep(token) in subject_deps]
     subjects = []
     for subj in base_subjects:
-        # Баг-фикс: "Нет времени" — "времени" в родительном падеже при "нет" не является подлежащим
+        # Обработка безличных предложений с отрицанием: "Нет времени".
+        # Слово в родительном падеже при "нет" — это не подлежащее.
         if (
-            subj.head.lemma_.lower() in ("нет", "не́ту")
-            and "Gen" in subj.morph.get("Case", [])
+            subj.head.lemma_.lower() in ("нет", "не́ту", "нету")
+            and "Gen" in subj.morph.get("Case", [])     # Родительный падеж
         ):
             continue
         
+        # Обычное подлежащее (включая склеенные: "Кто-то")
         full_subj = get_full_word(subj)
         if full_subj not in subjects:
             subjects.append(full_subj)
+            
+        # Однородные подлежащие (Маша и Петя): второй и последующие получают conj
         for child in subj.children:
             if dep(child) == "conj":
                 full_conj = get_full_word(child)
@@ -75,6 +86,10 @@ def analyze_sentence(text, index):
     # --- 2. Глагольные сказуемые ---
     predicates = []
 
+    # Проверяем, является ли токен глагольным сказуемым:
+    # 1. Корень дерева (ROOT) — всегда главный член.
+    # 2. Глагол/связка (VERB/AUX), но НЕ деепричастие (advcl), причастие (acl)
+    #    или определение (amod). Это отсекает "Прочитанная книга".
     def is_predicate_token(tok):
         d = dep(tok)
         if d == "root":
@@ -88,6 +103,7 @@ def analyze_sentence(text, index):
             full_pred = get_full_word(token)
             if full_pred not in predicates:
                 predicates.append(full_pred)
+            # Однородные сказуемые (читает и пишет): второй и последующие получают conj
             for child in token.children:
                 if dep(child) == "conj" and is_predicate_token(child):
                     full_conj = get_full_word(child)
@@ -99,25 +115,29 @@ def analyze_sentence(text, index):
         d = dep(token)
         full_name = get_full_word(token)
 
-        # attr / xcomp при глаголе-связке
+        # Составное именное сказуемое с глаголом-связкой:
+        # "был врачом" (attr/xcomp при глаголе).
         if d in ("attr", "xcomp") and token.head.pos_ in ("VERB", "AUX"):
             if full_name not in predicates:
                 predicates.append(full_name)
             continue
 
-        # Творительный при глаголах-связках
+        # Составное именное сказуемое с глаголами-связками в творительном падеже:
+        # "стала учителем" (obl + Ins при глаголе стать/быть/казаться и т.п.).
         if (
             d == "obl"
             and token.head.pos_ in ("VERB", "AUX")
-            and "Ins" in token.morph.get("Case", [])
+            and "Ins" in token.morph.get("Case", [])    # Творительный падеж
             and token.head.lemma_.lower() in COPULAS
         ):
             if full_name not in predicates:
                 predicates.append(full_name)
             continue
 
-        # Нулевая связка: только главные позиции (root/parataxis/orphan/appos/conj).
-        # Баг-фикс: убрали nmod, ccomp, dep, чтобы зависимые слова (архитектуры) не попадали в сказуемые.
+        # Нулевая связка (пропущенный глагол "быть"):
+        # "Мой брат — студент" -> "студент" становится root или parataxis.
+        # Ищем только главные позиции, чтобы не захватить зависимые слова
+        # как (например, "архитектуры" при "памятник").
         if (
             d in ("root", "parataxis", "orphan", "appos", "conj")
             and token.pos_ not in ("VERB", "AUX", "PUNCT", "ADP", "CCONJ", "SCONJ", "DET", "PART", "NUM")
@@ -127,45 +147,53 @@ def analyze_sentence(text, index):
             if full_name not in predicates:
                 predicates.append(full_name)
 
-    # --- 3. Тип предложения ---
+    # --- 3. Определение типа предложения ---
     sentence_type = "двусоставное"
     roots = [t for t in doc if dep(t) == "root"]
     has_verb = any(t.pos_ in ("VERB", "AUX") for t in doc)
     noun_roots = [r for r in roots if r.pos_ in ("NOUN", "PROPN")]
 
+    # Назывное (номинативное) предложение: "Зима.".
+    # Есть корень-существительное, нет глаголов и нет подлежащего.
     if noun_roots and not has_verb and not subjects:
         sentence_type = "назывное (номинативное)"
         full_root = get_full_word(noun_roots[0])
         if full_root not in predicates:
             predicates.append(full_root)
+            
+    # Односоставное предложение (без подлежащего или без сказуемого):
+    # "Люблю грозу", "Смеркается".
     elif not subjects or not predicates:
         sentence_type = "односоставное"
         if not subjects and not predicates:
             sentence_type += " (главные члены не выражены явно)"
 
-    # --- 4. Граф ---
+    # --- 4. Построение графа ---
     dot = Digraph(format='png', comment=f'Sentence {index}')
     dot.attr(rankdir='TB')
     for token in doc:
         node_id = f"{token.text}_{token.i}"
         node_label = f"{token.text}\n({token.pos_})"
         dot.node(node_id, node_label)
+        # Строим стрелки от главного слова к зависимому
         if dep(token) != "root":
             head_id = f"{token.head.text}_{token.head.i}"
             dot.edge(head_id, node_id, label=token.dep_)
 
-    # --- 5. Вывод ---
+    # --- 5. Вывод результатов ---
     print(f"\n--- Результаты разбора предложения №{index} ---")
     print(f"Тип предложения: {sentence_type}")
     print(f"Подлежащие: {', '.join(subjects) if subjects else 'не найдены'}")
     print(f"Сказуемые: {', '.join(predicates) if predicates else 'не найдены'}")
 
+    # Сохранение графа в PNG
     graph_filename = f"syntax_graph_{index}"
     filepath = os.path.join(TARGET_DIR, graph_filename)
     dot.render(filepath, cleanup=True)
     print(f"Граф успешно сохранен в: {filepath}.png")
 
 
+# Бесконечный интерактивный цикл ввода
 sentence_index = 1
 while True:
     print("\n" + "=" * 50)
@@ -182,3 +210,15 @@ while True:
         sentence_index += 1
     except Exception as e:
         print(f"Произошла ошибка: {e}")
+
+
+# Мальчик читает книгу.
+# Маша и Петя играют в футбол.
+# Мой брат — студент.
+# Она стала учителем.
+# Зима.
+# Люблю грозу в начале мая.
+# Нет времени.
+# Прочитанная книга лежала на столе.
+# Кто-то стучит в дверь.
+# Я знаю, что он придёт.
