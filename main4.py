@@ -114,8 +114,8 @@ def analyze_sentence(text, index):
             for child in tok.children:
                 if dep(child) in ("acl", "acl:relcl"):
                     for descendant in child.children:
-                        if descendant.i in parts:
-                            del parts[descendant.i]
+                        if dep(descendant) == "nsubj" and descendant.pos_ == "PRON":
+                            parts.pop(descendant.i, None)
 
         # ЗАЩИТА ДЛЯ ЧИСЛИТЕЛЬНЫХ: восстанавливаем существительное,
         # которое UDPipe ошибочно пометил как NUM, но не захватываем глагол-корень.
@@ -144,6 +144,8 @@ def analyze_sentence(text, index):
         return " ".join(parts[i] for i in sorted_indices)
 
     for subj in base_subjects:
+        if dep(subj) in ("nsubj", "csubj") and dep(subj.head) == "acl:relcl":
+            continue
         # Обработка безличных предложений с отрицанием: "Нет времени".
         if (
             subj.head.lemma_.lower() in ("нет", "не́ту", "нету")
