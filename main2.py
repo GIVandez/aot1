@@ -59,15 +59,13 @@ def remove_stop_words(words: Counter, stop_words: set[str], by_lemma: bool = Fal
 
 def print_comparison(dictionaries: dict[str, Counter]) -> None:
     print(f"\nТОП-{TOP_N} СЛОВ:")
-    
-    # Делаем колонки пошире, так как названия словарей длинные
+
     col_width = 30
     print(f"{'Ранг':<6}", end="")
     for name in dictionaries:
         print(f"{name:<{col_width}}", end="")
     print()
 
-    # Получаем самые частые слова для каждого словаря
     tops = {name: dictionary.most_common(TOP_N) for name, dictionary in dictionaries.items()}
 
     for rank in range(TOP_N):
@@ -84,14 +82,20 @@ def print_comparison(dictionaries: dict[str, Counter]) -> None:
 
 
 def zipf_constant(words: Counter) -> float:
+    total = sum(words.values())
+    if total == 0:
+        return 0.0
+
     items = words.most_common()
-    numerator = 0.0      # sum(y_i / x_i)
+    numerator = 0.0      # sum(y_i / x_i), y_i — относительная частота
     denominator = 0.0    # sum(1 / x_i^2)
 
     for rank, (_, count) in enumerate(items, start=1):
-        if count < 3:  # отсекаем хвост, влияющий константу Зипфа (частоты 1 и 2 слишком редки)
+        # Отсекаем хвост: слова с частотой 1–2 дают шум и искажают МНК.
+        if count < 3:
             break
-        numerator += count / rank
+        freq = count / total          # относительная частота
+        numerator += freq / rank
         denominator += 1 / (rank ** 2)
 
     if denominator == 0:
@@ -101,12 +105,10 @@ def zipf_constant(words: Counter) -> float:
 
 def plot_zipf(dictionaries: dict[str, Counter]) -> None:
     def plot_formatter(x, _):
-        # Форматирует числа на осях: убирает степени 10 и добавляет пробелы
         if x >= 1:
             return f"{int(x):,}".replace(",", " ")
         return f"{x:g}"
 
-    # Создаем две фигуры (полная и топ-40)
     fig_full, axes_full = plt.subplots(2, 2, figsize=(14, 10))
     fig_top40, axes_top40 = plt.subplots(2, 2, figsize=(14, 10))
 
@@ -114,41 +116,44 @@ def plot_zipf(dictionaries: dict[str, Counter]) -> None:
         items = dictionary.most_common()
         ranks = list(range(1, len(items) + 1))
         frequencies = [count for _, count in items]
+        total = sum(frequencies)
 
-        # Считаем константу для графика
+        # Относительные частоты для графика (доля от общего числа вхождений)
+        rel_frequencies = [f / total for f in frequencies]
+
+        # Считаем относительную константу
         c = zipf_constant(dictionary)
 
-        # ---------- 1. Полная диаграмма (лог-лог) ----------
+        # ---------- 1. Полная диаграмма (лог-лог, относительные частоты) ----------
         ax = axes_full.flat[i]
-        ax.loglog(ranks, frequencies, marker=".", linestyle="none", label=f"Данные ({name})")
+        ax.loglog(ranks, rel_frequencies, marker=".", linestyle="none", label=f"Данные ({name})")
         if c > 0:
             theoretical = [c / r for r in ranks]
-            ax.loglog(ranks, theoretical, "--", color="red", label=f"Теория y = {c:.2f} / x")
-        
-        ax.set_title(f"Закон Зипфа (полная): {name}")
+            ax.loglog(ranks, theoretical, "--", color="red", label=f"Теория y = {c:.3e} / x")
+
+        ax.set_title(f"Закон Зипфа (полная, отн. частота): {name}")
         ax.set_xlabel("Ранг слова")
-        ax.set_ylabel("Частота")
+        ax.set_ylabel("Относительная частота")
         ax.grid(True, which="both", alpha=0.3)
         ax.legend()
         ax.xaxis.set_major_formatter(FuncFormatter(plot_formatter))
         ax.yaxis.set_major_formatter(FuncFormatter(plot_formatter))
 
-        # ---------- 2. Диаграмма для рангов 1–40 ----------
+        # ---------- 2. Диаграмма для рангов 1–40 (относительные частоты) ----------
         top_ranks = ranks[:TOP_N]
-        top_freqs = frequencies[:TOP_N]
+        top_rel = rel_frequencies[:TOP_N]
 
         ax = axes_top40.flat[i]
-        ax.plot(top_ranks, top_freqs, "o-", label=f"Данные ({name})")
+        ax.plot(top_ranks, top_rel, "o-", label=f"Данные ({name})")
         if c > 0:
             theoretical_top = [c / r for r in top_ranks]
-            ax.plot(top_ranks, theoretical_top, "--", color="red", label=f"Теория y = {c:.2f} / x")
-        
-        ax.set_title(f"Закон Зипфа (ранги 1–{TOP_N}): {name}")
+            ax.plot(top_ranks, theoretical_top, "--", color="red", label=f"Теория y = {c:.3e} / x")
+
+        ax.set_title(f"Закон Зипфа (ранги 1–{TOP_N}, отн. частота): {name}")
         ax.set_xlabel("Ранг слова")
-        ax.set_ylabel("Частота")
+        ax.set_ylabel("Относительная частота")
         ax.grid(True, alpha=0.3)
         ax.legend()
-        # Фиксируем ось X, чтобы она начиналась с 1 (ранга 0 не существует)
         ax.set_xlim(0.5, TOP_N + 1.5)
 
     fig_full.tight_layout()
@@ -173,11 +178,10 @@ def main() -> None:
     lemmas = to_lemmas(word_forms)
 
     # 4. Строим Словари 3 и 4 — без стоп-слов
-    #    Для словоформ сравниваем по лемме, чтобы удалялись все формы стоп-слов
     word_forms_no_stop_words = remove_stop_words(word_forms, stop_words, by_lemma=True)
     lemmas_no_stop_words = remove_stop_words(lemmas, stop_words)
 
-    # 5. Собираем все четыре словаря с нужными названиями
+    # 5. Собираем все четыре словаря
     dictionaries = {
         "Исходный": word_forms,
         "Леммы": lemmas,
@@ -190,21 +194,21 @@ def main() -> None:
     save_dict(word_forms_no_stop_words, "dictionary_3_no_stop_words.json")
     save_dict(lemmas_no_stop_words, "dictionary_4_lemmas_no_stop_words.json")
 
-    # 6. Выводим топ-40 в виде таблицы
+    # 6. Выводим топ-40
     print_comparison(dictionaries)
 
-    # 7. Считаем и выводим константы Зипфа
-    print("\nКОНСТАНТЫ ЗИПФА (по формуле со слайда, МНК для y = C/x):")
+    # 7. Считаем и выводим ОТНОСИТЕЛЬНЫЕ константы Зипфа
+    print("\nОТНОСИТЕЛЬНЫЕ КОНСТАНТЫ ЗИПФА (МНК для y = C/x, частоты нормированы на объём):")
     for name, dictionary in dictionaries.items():
         c = zipf_constant(dictionary)
-        print(f"  {name}: {c:.2f}")
+        print(f"  {name}: {c:.8f}")
 
-    # 8. Выводим общую статистику
+    # 8. Статистика
     print("\nСТАТИСТИКА:")
     for name, dictionary in dictionaries.items():
         print(f"  {name}: {sum(dictionary.values())} вхождений, {len(dictionary)} различных слов")
 
-    # 9. Строим графики
+    # 9. Графики
     plot_zipf(dictionaries)
 
 

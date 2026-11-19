@@ -37,6 +37,7 @@ def analyze_sentence(text, index):
     # Для предложений с нулевой связкой: "Мой брат — студент".
     text_clean = re.sub(r"\s+[—–]\s+", " ", text).strip()
     doc = nlp(text_clean)
+    predicates = [] 
 
     # Вспомогательная функция для приведения dep_ к нижнему регистру,
     # так как spacy_udpipe возвращает ROOT заглавными, а остальное — строчными.
@@ -58,40 +59,133 @@ def analyze_sentence(text, index):
         parts_sorted = sorted(set(parts), key=lambda w: text_clean.find(w))
         return "".join(parts_sorted)
 
+
+
     # --- 1. Подлежащие ---
     subject_deps = {"nsubj", "csubj", "nsubjpass", "csubjpass"}
     base_subjects = [token for token in doc if dep(token) in subject_deps]
     subjects = []
+
+    def collect_subject_span(tok):
+        """Рекурсивно собирает именную группу (ФИО, числительные, частицы)."""
+        parts = {tok.i: tok.text}
+        
+        def gather_children(node):
+            for child in node.children:
+                cd = dep(child)
+                # Включаем nummod:gov и другие вариации
+                if cd in ("flat", "compound", "nummod", "nummod:gov", "fixed", "goeswith"):
+                    parts[child.i] = child.text
+                    gather_children(child)
+                    
+        def gather_parents(node):
+            head = node.head
+            if head is not None and head.i != node.i:
+                hd = dep(head)
+                # Если мы начали с числительного, или родитель — числительное
+                if hd in ("nummod", "nummod:gov", "compound") or head.pos_ == "NUM":
+                    parts[head.i] = head.text
+                    # Собираем сестер/братьев головы (например, "двадцать" при "пять")
+                    for sib in head.children:
+                        if dep(sib) in ("nummod", "nummod:gov", "compound", "flat"):
+                            parts[sib.i] = sib.text
+                            gather_children(sib)
+                    gather_parents(head)
+
+        gather_children(tok)
+        gather_parents(tok)
+
+        # ЗАЩИТА ДЛЯ ЧИСЛИТЕЛЬНЫХ: если базовое слово — NUM, или его родитель 
+        # ошибочно помечен как VERB (но у него есть дети NUM) — забираем существительное.
+        if tok.pos_ in ("NUM", "VERB") or (tok.head and tok.head.pos_ == "VERB"):
+            for child in tok.children:
+                if child.pos_ in ("NOUN", "PROPN") or (child.pos_ == "VERB" and any(c.pos_ == "NUM" for c in child.children)):
+                    parts[child.i] = child.text
+                    gather_children(child)
+            if tok.head is not None and (tok.head.pos_ in ("NOUN", "PROPN") or (tok.head.pos_ == "VERB" and any(c.pos_ == "NUM" for c in tok.head.children))):
+                parts[tok.head.i] = tok.head.text
+
+        sorted_indices = sorted(parts.keys())
+        return " ".join(parts[i] for i in sorted_indices)
+
     for subj in base_subjects:
         # Обработка безличных предложений с отрицанием: "Нет времени".
-        # Слово в родительном падеже при "нет" — это не подлежащее.
         if (
             subj.head.lemma_.lower() in ("нет", "не́ту", "нету")
-            and "Gen" in subj.morph.get("Case", [])     # Родительный падеж
+            and "Gen" in subj.morph.get("Case", [])
         ):
             continue
-        
-        # Обычное подлежащее (включая склеенные: "Кто-то")
-        full_subj = get_full_word(subj)
+
+        full_subj = collect_subject_span(subj)
         if full_subj not in subjects:
             subjects.append(full_subj)
-            
+
         # Однородные подлежащие (Маша и Петя): второй и последующие получают conj
         for child in subj.children:
             if dep(child) == "conj":
-                full_conj = get_full_word(child)
+                full_conj = collect_subject_span(child)
                 if full_conj not in subjects:
                     subjects.append(full_conj)
 
-    # --- 2. Глагольные сказуемые ---
+    # --- 1.1. Fallback на случай, если nsubj вообще не найден ---
+    if not subjects:
+        main_verb = None
+        for t in doc:
+            if dep(t) == "root" and t.pos_ in ("VERB", "AUX"):
+                main_verb = t
+                break
+        if main_verb is None:
+            for t in doc:
+                if t.pos_ in ("VERB", "AUX") and dep(t) not in ("advcl", "acl", "amod"):
+                    main_verb = t
+                    break
+
+        if main_verb is not None:
+            candidates = []
+            for t in doc:
+                if t.pos_ not in ("NOUN", "PROPN", "PRON", "NUM"):
+                    continue
+                # Для числительных (как в "двадцать пять") падеж может быть Nom
+                if "Nom" not in t.morph.get("Case", []):
+                    continue
+                if t is main_verb or t.head is main_verb:
+                    pass
+                if get_full_word(t) in predicates:
+                    continue
+                if t.head is not None and t.head.pos_ == "ADP":
+                    continue
+                candidates.append(t)
+
+            if candidates:
+                candidates.sort(key=lambda t: abs(t.i - main_verb.i))
+                full_subj = collect_subject_span(candidates[0])
+                if full_subj not in subjects:
+                    subjects.append(full_subj)
+                for child in candidates[0].children:
+                    if dep(child) == "conj":
+                        full_conj = collect_subject_span(child)
+                        if full_conj not in subjects:
+                            subjects.append(full_conj)
+
+        # --- 2. Глагольные сказуемые ---
     predicates = []
 
-    # Проверяем, является ли токен глагольным сказуемым:
-    # 1. Корень дерева (ROOT) — всегда главный член.
-    # 2. Глагол/связка (VERB/AUX), но НЕ деепричастие (advcl), причастие (acl)
-    #    или определение (amod). Это отсекает "Прочитанная книга".
+    # Проверяем, является ли токен глагольным сказуемым
     def is_predicate_token(tok):
         d = dep(tok)
+        # ЗАЩИТА 1: если слово или его лемма уже вошли в подлежащее — это не сказуемое
+        if get_full_word(tok) in subjects or tok.lemma_ in subjects:
+            return False
+            
+        # ЗАЩИТА 2: если у слова есть дети с тегом NUM (числительные) — это не глагол. 
+        # UDPipe часто ошибочно дает тег VERB существительным вроде "котят", если рядом есть число.
+        if any(child.pos_ == "NUM" for child in tok.children):
+            return False
+
+        # ЗАЩИТА 3: если это xcomp, и у него есть подлежащее-числительное (как в "Девять котят гуляют.")
+        if d == "xcomp" and any(c.pos_ == "NUM" for c in tok.children):
+            return False
+            
         if d == "root":
             return True
         if tok.pos_ in ("VERB", "AUX") and d not in ("advcl", "acl", "amod", "acl:relcl"):
@@ -103,7 +197,6 @@ def analyze_sentence(text, index):
             full_pred = get_full_word(token)
             if full_pred not in predicates:
                 predicates.append(full_pred)
-            # Однородные сказуемые (читает и пишет): второй и последующие получают conj
             for child in token.children:
                 if dep(child) == "conj" and is_predicate_token(child):
                     full_conj = get_full_word(child)
@@ -115,29 +208,28 @@ def analyze_sentence(text, index):
         d = dep(token)
         full_name = get_full_word(token)
 
-        # Составное именное сказуемое с глаголом-связкой:
+        # 1. Составное именное сказуемое с глаголом-связкой:
         # "был врачом" (attr/xcomp при глаголе).
-        if d in ("attr", "xcomp") and token.head.pos_ in ("VERB", "AUX"):
-            if full_name not in predicates:
-                predicates.append(full_name)
-            continue
+        if d in ("attr", "xcomp"):
+            # Проверяем, что родитель — глагол/связка, либо сам является связкой
+            if token.head.pos_ in ("VERB", "AUX") or token.head.lemma_.lower() in COPULAS:
+                if full_name not in predicates:
+                    predicates.append(full_name)
+                continue
 
-        # Составное именное сказуемое с глаголами-связками в творительном падеже:
-        # "стала учителем" (obl + Ins при глаголе стать/быть/казаться и т.п.).
+        # 2. Глаголы-связки в творительном падеже ("стала учителем"):
+        # В UDPipe "учителем" имеет связь obl.
+        # Мы убрали жесткую проверку на падеж "Ins", так как парсер иногда его не проставляет.
         if (
-            d == "obl"
-            and token.head.pos_ in ("VERB", "AUX")
-            and "Ins" in token.morph.get("Case", [])    # Творительный падеж
-            and token.head.lemma_.lower() in COPULAS
+            d in ("obl", "attr", "xcomp", "root")
+            and (token.head.lemma_.lower() in COPULAS or token.lemma_.lower() in COPULAS)
         ):
             if full_name not in predicates:
                 predicates.append(full_name)
             continue
 
-        # Нулевая связка (пропущенный глагол "быть"):
+        # 3. Нулевая связка (пропущенный глагол "быть"):
         # "Мой брат — студент" -> "студент" становится root или parataxis.
-        # Ищем только главные позиции, чтобы не захватить зависимые слова
-        # как (например, "архитектуры" при "памятник").
         if (
             d in ("root", "parataxis", "orphan", "appos", "conj")
             and token.pos_ not in ("VERB", "AUX", "PUNCT", "ADP", "CCONJ", "SCONJ", "DET", "PART", "NUM")
@@ -212,6 +304,9 @@ while True:
         print(f"Произошла ошибка: {e}")
 
 
+
+
+# ПРОВЕРКА
 # Мальчик читает книгу.
 # Маша и Петя играют в футбол.
 # Мой брат — студент.
@@ -222,3 +317,7 @@ while True:
 # Прочитанная книга лежала на столе.
 # Кто-то стучит в дверь.
 # Я знаю, что он придёт.
+# Девять котят гуляют.
+# девять котят гуляют
+# двадцать пять котят пошли гулять
+# 
