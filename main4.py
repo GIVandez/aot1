@@ -65,6 +65,7 @@ def analyze_sentence(text, index):
     subject_deps = {"nsubj", "csubj", "nsubjpass", "csubjpass"}
     base_subjects = [token for token in doc if dep(token) in subject_deps]
     subjects = []
+    predicates = []
 
     def collect_subject_span(tok):
         """Рекурсивно собирает именную группу (ФИО, числительные, частицы)."""
@@ -74,7 +75,19 @@ def analyze_sentence(text, index):
             for child in node.children:
                 cd = dep(child)
                 # Включаем nummod:gov и другие вариации
-                if cd in ("flat", "compound", "nummod", "nummod:gov", "fixed", "goeswith"):
+                if cd in (
+                    "flat",
+                    "flat:name",
+                    "appos",
+                    "amod",
+                    "det",
+                    "poss",
+                    "compound",
+                    "nummod",
+                    "nummod:gov",
+                    "fixed",
+                    "goeswith",
+                ):
                     parts[child.i] = child.text
                     gather_children(child)
                     
@@ -82,6 +95,8 @@ def analyze_sentence(text, index):
             head = node.head
             if head is not None and head.i != node.i:
                 hd = dep(head)
+                if head.pos_ in ("VERB", "AUX"):
+                    return
                 # Если мы начали с числительного, или родитель — числительное
                 if hd in ("nummod", "nummod:gov", "compound") or head.pos_ == "NUM":
                     parts[head.i] = head.text
@@ -95,14 +110,34 @@ def analyze_sentence(text, index):
         gather_children(tok)
         gather_parents(tok)
 
-        # ЗАЩИТА ДЛЯ ЧИСЛИТЕЛЬНЫХ: если базовое слово — NUM, или его родитель 
-        # ошибочно помечен как VERB (но у него есть дети NUM) — забираем существительное.
-        if tok.pos_ in ("NUM", "VERB") or (tok.head and tok.head.pos_ == "VERB"):
+        if tok.dep_.lower() in ("nsubj", "nsubjpass"):
             for child in tok.children:
-                if child.pos_ in ("NOUN", "PROPN") or (child.pos_ == "VERB" and any(c.pos_ == "NUM" for c in child.children)):
+                if dep(child) in ("acl", "acl:relcl"):
+                    for descendant in child.children:
+                        if descendant.i in parts:
+                            del parts[descendant.i]
+
+        # ЗАЩИТА ДЛЯ ЧИСЛИТЕЛЬНЫХ: восстанавливаем существительное,
+        # которое UDPipe ошибочно пометил как NUM, но не захватываем глагол-корень.
+        if tok.pos_ in ("NUM", "VERB"):
+            for child in tok.children:
+                if child.pos_ in ("NOUN", "PROPN"):
                     parts[child.i] = child.text
                     gather_children(child)
-            if tok.head is not None and (tok.head.pos_ in ("NOUN", "PROPN") or (tok.head.pos_ == "VERB" and any(c.pos_ == "NUM" for c in tok.head.children))):
+            if (
+                dep(tok) in ("nsubj", "nsubjpass")
+                and tok.head.pos_ == "VERB"
+                and dep(tok.head) == "root"
+            ):
+                for child in tok.head.children:
+                    if dep(child) == "nsubj" and child.pos_ == "NUM":
+                        parts[tok.head.i] = tok.head.text
+                        break
+            if (
+                tok.head is not None
+                and tok.head.pos_ in ("NOUN", "PROPN")
+                and dep(tok.head) != "root"
+            ):
                 parts[tok.head.i] = tok.head.text
 
         sorted_indices = sorted(parts.keys())
@@ -124,8 +159,38 @@ def analyze_sentence(text, index):
         for child in subj.children:
             if dep(child) == "conj":
                 full_conj = collect_subject_span(child)
+                if child.pos_ == "PROPN":
+                    shared_name_parts = [
+                        grandchild.text
+                        for grandchild in subj.children
+                        if dep(grandchild) in ("appos", "flat:name")
+                    ]
+                    if shared_name_parts:
+                        full_conj = " ".join(
+                            [full_conj] + [
+                                name_part
+                                for name_part in shared_name_parts
+                                if name_part not in full_conj
+                            ]
+                        )
                 if full_conj not in subjects:
                     subjects.append(full_conj)
+
+    # Подлежащие во сочинённой второй части предложения:
+    # "Пётр пошёл гулять, а потом Вася и Коля съели суп."
+    for final_predicate in doc:
+        if dep(final_predicate) != "conj" or final_predicate.pos_ not in ("VERB", "AUX"):
+            continue
+
+        coordinated_subjects = [
+            child
+            for child in final_predicate.head.children
+            if dep(child) == "conj" and child.i < final_predicate.i
+        ]
+        for candidate in coordinated_subjects:
+            full_candidate = collect_subject_span(candidate)
+            if full_candidate not in subjects:
+                subjects.append(full_candidate)
 
     # --- 1.1. Fallback на случай, если nsubj вообще не найден ---
     if not subjects:
@@ -173,20 +238,37 @@ def analyze_sentence(text, index):
     # Проверяем, является ли токен глагольным сказуемым
     def is_predicate_token(tok):
         d = dep(tok)
+        # Части ФИ/ФИО не являются самостоятельными сказуемыми.
+        if d in ("appos", "flat:name"):
+            return False
+        # Придаточный глагольный оборот не является главным сказуемым.
+        if d in ("acl:relcl", "acl", "advcl"):
+            return False
         # ЗАЩИТА 1: если слово или его лемма уже вошли в подлежащее — это не сказуемое
         if get_full_word(tok) in subjects or tok.lemma_ in subjects:
             return False
             
         # ЗАЩИТА 2: если у слова есть дети с тегом NUM (числительные) — это не глагол. 
         # UDPipe часто ошибочно дает тег VERB существительным вроде "котят", если рядом есть число.
-        if any(child.pos_ == "NUM" for child in tok.children):
+        if d != "root" and any(child.pos_ == "NUM" for child in tok.children):
             return False
 
         # ЗАЩИТА 3: если это xcomp, и у него есть подлежащее-числительное (как в "Девять котят гуляют.")
-        if d == "xcomp" and any(c.pos_ == "NUM" for c in tok.children):
-            return False
-            
+        if d == "xcomp":
+            if any(c.pos_ == "NUM" for c in tok.children):
+                return False
+            if tok.head.pos_ in ("VERB", "AUX"):
+                for child in tok.head.children:
+                    if dep(child) == "nsubj" and child.pos_ == "NUM":
+                        return True
+                return False
         if d == "root":
+            if (
+                tok.pos_ in ("VERB", "AUX")
+                and any(dep(child) == "nsubj" and child.pos_ == "NUM" for child in tok.children)
+                and any(dep(child) == "xcomp" for child in tok.children)
+            ):
+                return False
             return True
         if tok.pos_ in ("VERB", "AUX") and d not in ("advcl", "acl", "amod", "acl:relcl"):
             return True
@@ -195,6 +277,22 @@ def analyze_sentence(text, index):
     for token in doc:
         if is_predicate_token(token):
             full_pred = get_full_word(token)
+            if dep(token) == "root":
+                compound_children = sorted(
+                    (
+                        child for child in token.children
+                        if dep(child) == "xcomp" and child.pos_ in ("VERB", "AUX")
+                    ),
+                    key=lambda child: child.i,
+                )
+                if compound_children:
+                    full_pred = " ".join(
+                        get_full_word(part)
+                        for part in sorted(
+                            [token] + compound_children,
+                            key=lambda part: part.i,
+                        )
+                    )
             if full_pred not in predicates:
                 predicates.append(full_pred)
             for child in token.children:
@@ -208,10 +306,14 @@ def analyze_sentence(text, index):
         d = dep(token)
         full_name = get_full_word(token)
 
+        # Части уже собранного ФИ/ФИО не могут попасть в сказуемое.
+        if d in ("appos", "flat:name") or any(full_name in subject for subject in subjects):
+            continue
+
         # 1. Составное именное сказуемое с глаголом-связкой:
         # "был врачом" (attr/xcomp при глаголе).
-        if d in ("attr", "xcomp"):
-            # Проверяем, что родитель — глагол/связка, либо сам является связкой
+        if d == "attr" or (d == "xcomp" and token.head.lemma_.lower() in COPULAS):
+            # Проверяем именную часть составного сказуемого только через связку.
             if token.head.pos_ in ("VERB", "AUX") or token.head.lemma_.lower() in COPULAS:
                 if full_name not in predicates:
                     predicates.append(full_name)
@@ -320,4 +422,19 @@ while True:
 # Девять котят гуляют.
 # девять котят гуляют
 # двадцать пять котят пошли гулять
-# 
+# Иван Иванов пришёл.
+# Иван Петрович Иванов ушёл.
+# Анна и Сергей Ивановы пришли.
+# петр михайлович пошел гулять, а потом вася и коля съели суп
+# Хливкие шорьки пырялись по наве, и хрюкотали зелюки, как мюмзики в мове. 
+# Мальчик читает и пишет книгу.
+# Мальчик вчера писал письмо и не читает газету.
+# Книга лежит на столе.
+# На столе лежит книга.
+# Когда мальчик пришёл домой, мама приготовила ужин.
+# Маша сказала, что Петя придёт вечером.
+# Мальчик, который читает книгу, устал.
+# В комнате никого нет.
+# Вечерело.
+# Его отправили домой.
+# Прочитанная мальчиком книга лежит на столе.
