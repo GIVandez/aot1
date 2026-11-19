@@ -65,6 +65,7 @@ def analyze_sentence(text, index):
     subject_deps = {"nsubj", "csubj", "nsubjpass", "csubjpass"}
     base_subjects = [token for token in doc if dep(token) in subject_deps]
     subjects = []
+    subject_groups = []
     predicates = []
 
     def collect_subject_span(tok):
@@ -157,7 +158,9 @@ def analyze_sentence(text, index):
         if full_subj not in subjects:
             subjects.append(full_subj)
 
-        # Однородные подлежащие (Маша и Петя): второй и последующие получают conj
+        subj_group = [full_subj]
+
+        # Однородные подлежащие (Маша и Петя): объединяем в одну группу.
         for child in subj.children:
             if dep(child) == "conj":
                 full_conj = collect_subject_span(child)
@@ -177,6 +180,9 @@ def analyze_sentence(text, index):
                         )
                 if full_conj not in subjects:
                     subjects.append(full_conj)
+                if full_conj not in subj_group:
+                    subj_group.append(full_conj)
+        subject_groups.append(subj_group)
 
     # Подлежащие во сочинённой второй части предложения:
     # "Пётр пошёл гулять, а потом Вася и Коля съели суп."
@@ -240,11 +246,12 @@ def analyze_sentence(text, index):
     # Проверяем, является ли токен глагольным сказуемым
     def is_predicate_token(tok):
         d = dep(tok)
+        if d in ("acl", "acl:relcl", "amod"):
+            return False
+        if d == "advcl":
+            return tok.pos_ in ("VERB", "AUX")
         # Части ФИ/ФИО не являются самостоятельными сказуемыми.
         if d in ("appos", "flat:name"):
-            return False
-        # Придаточный глагольный оборот не является главным сказуемым.
-        if d in ("acl:relcl", "acl", "advcl"):
             return False
         # ЗАЩИТА 1: если слово или его лемма уже вошли в подлежащее — это не сказуемое
         if get_full_word(tok) in subjects or tok.lemma_ in subjects:
@@ -279,6 +286,10 @@ def analyze_sentence(text, index):
     for token in doc:
         if is_predicate_token(token):
             full_pred = get_full_word(token)
+            if dep(token) in ("advcl", "acl", "acl:relcl"):
+                if full_pred not in predicates:
+                    predicates.append(full_pred)
+                continue
             if dep(token) == "root":
                 compound_children = sorted(
                     (
@@ -379,7 +390,18 @@ def analyze_sentence(text, index):
     # --- 5. Вывод результатов ---
     print(f"\n--- Результаты разбора предложения №{index} ---")
     print(f"Тип предложения: {sentence_type}")
-    print(f"Подлежащие: {', '.join(subjects) if subjects else 'не найдены'}")
+    if subject_groups:
+        subject_output = []
+        for group in subject_groups:
+            if len(group) == 1:
+                subject_output.append(group[0])
+            else:
+                subject_output.append(f"[{', '.join(group)}]")
+        print(f"Подлежащие: {', '.join(subject_output)}")
+    elif subjects:
+        print(f"Подлежащие: {', '.join(subjects)}")
+    else:
+        print("Подлежащие: не найдены")
     print(f"Сказуемые: {', '.join(predicates) if predicates else 'не найдены'}")
 
     # Сохранение графа в PNG
@@ -440,3 +462,4 @@ while True:
 # Вечерело.
 # Его отправили домой.
 # Прочитанная мальчиком книга лежит на столе.
+# Когда мальчик пришёл домой, мама и папа приготовили ужин.
