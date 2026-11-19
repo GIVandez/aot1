@@ -244,9 +244,9 @@ def analyze_sentence(text, index):
             if full_candidate not in subjects:
                 subjects.append(full_candidate)
 
-    # --- 1.1. Fallback на случай, если nsubj вообще не найден ---
-    # Пример: "Люблю грозу в начале мая." -> подлежащего нет, fallback попробует найти его по падежу
-    # Пример: "Смеркается." -> fallback не найдёт кандидатов, subjects останется пустым
+    # --- Случай, если nsubj вообще не найден ---
+    # Пример: "Люблю грозу в начале мая." -> подлежащего нет, попробует найти его по падежу
+    # Пример: "Смеркается." -> не найдёт кандидатов, subjects останется пустым
     if not subjects:
         main_verb = None
         for t in doc:
