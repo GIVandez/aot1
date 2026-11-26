@@ -173,9 +173,11 @@ def split_into_chunks(text, tokenizer, max_tokens=480):
 
 def summarize_with_transformer(text):
     """Создаёт реферат русскоязычной моделью T5."""
+
     # Загружаем токенизатор и веса выбранной модели.
     tokenizer = T5Tokenizer.from_pretrained(TRANSFORMER_MODEL)
     model = T5ForConditionalGeneration.from_pretrained(TRANSFORMER_MODEL)
+    
     # Используем GPU, если он доступен, иначе выполняем генерацию на CPU.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
