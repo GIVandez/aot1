@@ -20,7 +20,6 @@ BOOKS_API_URL = (
 )
 START = "Начало предложения"
 END = "Конец предложения"
-NUMERAL = "числительное"
 
 # Переводим метки pymorphy3 в понятные названия частей речи.
 POS_NAMES = {
@@ -33,7 +32,7 @@ POS_NAMES = {
     "PRTF": "причастие",
     "PRTS": "причастие",
     "GRND": "деепричастие",
-    "NUMR": NUMERAL,
+    "NUMR": "числительное",
     "ADVB": "наречие",
     "NPRO": "местоимение",
     "PRED": "категория состояния",
@@ -149,10 +148,10 @@ def print_results(
     """Печатает сводки по переходам между частями речи и их вероятности."""
     print(f"\nОбработано предложений: {sentence_count}")
 
-    print(f"\nПереходы от части речи «{NUMERAL}»:")
+    print(f"\nПереходы от части речи «числительное»:")
     for destination in ALL_PARTS_OF_SPEECH:
-        probability = probabilities.get((NUMERAL, destination), 0.0)
-        print(f"  {NUMERAL} -> {destination}: {probability:.5f}")
+        probability = probabilities.get(("числительное", destination), 0.0)
+        print(f"  'числительное' -> {destination}: {probability:.5f}")
 
     pos_edges = [
         (edge, probability)
