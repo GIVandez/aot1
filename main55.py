@@ -17,7 +17,6 @@ from collections import Counter
 from pathlib import Path
 
 
-SAMPLE_TEXT_PATH = Path(__file__).resolve().parent / "source" / "source_ref.txt"
 REFERENCE_PATH = Path(__file__).resolve().parent / "source" / "res_ref.txt"
 SUMMARY_OUTPUT_PATH = (
     Path(__file__).resolve().parent / "source" / "cropped_text_2.txt"
@@ -220,35 +219,10 @@ def summarize_with_transformer(text):
     return " ".join(summaries)
 
 
-def parse_percent(value):
-    try:
-        percent = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("укажите целое число") from error
-    if not 1 <= percent <= 100:
-        raise argparse.ArgumentTypeError("значение должно быть от 1 до 100")
-    return percent
-
-
-def read_console_text():
-    """Читает многострочный текст до пустой строки."""
-    print("Введите текст; пустая строка завершит ввод:")
-    lines = []
-    while True:
-        try:
-            line = input()
-        except EOFError:
-            break
-        if not line.strip():
-            break
-        lines.append(line)
-    return "\n".join(lines)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Программы для четырёх заданий.")
+    parser = argparse.ArgumentParser(description="Программы для заданий 1, 3 и 4.")
     tasks = parser.add_mutually_exclusive_group(required=True)
-    for number in range(1, 5):
+    for number in (1, 3, 4):
         tasks.add_argument(
             f"--{number}",
             dest="task",
@@ -260,19 +234,31 @@ def main():
         "files",
         nargs="*",
         type=Path,
-        help="для --2: реферат и образец; для --4: исходный текст и файл результата",
+        help="для --1: исходный текст и образец; для --4: исходный текст и файл результата",
     )
 
     args = parser.parse_args()
-    if args.task == 2:
+    if args.task == 1:
         if len(args.files) != 2:
-            parser.error("для --2 укажите два файла: реферат и реферат-образец")
+            parser.error("для --1 укажите исходный текст и файл реферата-образца")
         try:
-            candidate = args.files[0].read_text(encoding="utf-8-sig")
-            reference = args.files[1].read_text(encoding="utf-8-sig")
-            if not candidate.strip() or not reference.strip():
-                raise ValueError("Файлы с рефератами не должны быть пустыми.")
-            print_rouge_scores(candidate, reference)
+            source_path, reference_path = args.files
+            if SUMMARY_OUTPUT_PATH.resolve() in (
+                source_path.resolve(),
+                reference_path.resolve(),
+            ):
+                raise ValueError("Файл результата не должен совпадать с входным файлом.")
+            source = source_path.read_text(encoding="utf-8-sig")
+            reference = reference_path.read_text(encoding="utf-8-sig")
+            if not source.strip() or not reference.strip():
+                raise ValueError("Файлы с текстом и образцом не должны быть пустыми.")
+
+            summary = summarize(source, TEST_COMPRESSION_PERCENT)
+            SUMMARY_OUTPUT_PATH.write_text(summary, encoding="utf-8")
+            print(summary)
+            print(f"\nРеферат сохранён в: {SUMMARY_OUTPUT_PATH}")
+            print("\nМетрики для созданного реферата:")
+            print_rouge_scores(summary, reference)
         except (OSError, UnicodeError, ValueError) as error:
             parser.error(str(error))
         return
@@ -308,21 +294,8 @@ def main():
             parser.error(str(error))
         return
 
-    if args.task != 1:
-        parser.error(f"задание {args.task} пока не реализовано")
-    if args.files:
-        parser.error("аргументы-файлы используются только с --2")
-
-    try:
-        # text = read_console_text()
-        text = SAMPLE_TEXT_PATH.read_text(encoding="utf-8-sig")
-        # compression = parse_percent(input("Введите процент реферата (1–100): "))
-        summary = summarize(text, TEST_COMPRESSION_PERCENT)
-        SUMMARY_OUTPUT_PATH.write_text(summary, encoding="utf-8")
-        print(summary)
-        print(f"\nРеферат сохранён в: {SUMMARY_OUTPUT_PATH}")
-    except (ValueError, argparse.ArgumentTypeError, OSError, UnicodeError) as error:
-        parser.error(str(error))
+    if args.task == 3:
+        parser.error("задание 3 пока не реализовано")
 
 
 if __name__ == "__main__":
