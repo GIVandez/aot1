@@ -15,11 +15,6 @@ morph = pymorphy3.MorphAnalyzer()
 
 
 REFERENCE_PATH = Path(__file__).resolve().parent / "source" / "res_ref.txt"
-SUMMARY_OUTPUT_PATH = (
-    Path(__file__).resolve().parent / "source" / "cropped_text_2.txt"
-)
-# Процент исходного текста, который алгоритм старается оставить.
-TEST_COMPRESSION_PERCENT = 5
 # Русскоязычная модель T5 для абстрактивного суммирования.
 TRANSFORMER_MODEL = "cointegrated/rut5-base-absum"
 
@@ -207,7 +202,7 @@ def split_into_chunks(text, tokenizer, max_tokens=480):
     return chunks
 
 
-def summarize_with_transformer(text):
+def summarize_with_transformer(text, compression_percent):
     """Создаёт реферат русскоязычной моделью T5."""
 
     # Загружаем токенизатор и веса выбранной модели.
@@ -227,7 +222,7 @@ def summarize_with_transformer(text):
     for chunk in chunks:
         # Модель получает ориентир длины в словах; это не строгий предел.
         target_words = max(
-            5, round(len(words(chunk)) * TEST_COMPRESSION_PERCENT / 100)
+            5, round(len(words(chunk)) * compression_percent / 100)
         )
         inputs = tokenizer(
             f"[{target_words}] {chunk}",
@@ -254,23 +249,40 @@ def summarize_with_transformer(text):
     return " ".join(summaries)
 
 
+def read_compression_percent():
+    """Запрашивает и проверяет процент сжатия."""
+    try:
+        percent = int(input("Введите процент сжатия (1–100): "))
+    except (EOFError, ValueError) as error:
+        raise ValueError("Введите процент целым числом от 1 до 100.") from error
+    if not 1 <= percent <= 100:
+        raise ValueError("Процент должен быть от 1 до 100.")
+    return percent
+
+
 
 def main():
     arguments = sys.argv[1:]
     if not arguments or arguments[0] in ("-h", "--help"):
         print(
             "Запуск:\n"
-            "  uv run main55.py --1 <исходный_текст.txt> <образец.txt>\n"
-            "  uv run main55.py --4 <исходный_текст.txt> <файл_результата.txt>"
+            "  uv run main55.py --1 <исходный_текст.txt> <файл_результата.txt>\n"
+            "  uv run main55.py --4 <исходный_текст.txt> <файл_результата.txt>\n"
+            "После запуска введите процент сжатия (1–100)."
         )
         return
 
     task = arguments[0]
+    if task not in ("--1", "--4"):
+        print("Ошибка: доступны задания --1 и --4.", file=sys.stderr)
+        raise SystemExit(2)
+    if len(arguments) != 3:
+        print("Ошибка: укажите два пути к файлам.", file=sys.stderr)
+        raise SystemExit(2)
 
     source_path, second_path = map(Path, arguments[1:])
-    output_path = SUMMARY_OUTPUT_PATH if task == "--1" else second_path
-    reference_path = second_path if task == "--1" else REFERENCE_PATH
-
+    output_path = second_path
+    reference_path = REFERENCE_PATH
 
     try:
         source = source_path.read_text(encoding="utf-8-sig")
@@ -278,10 +290,11 @@ def main():
         if not source.strip() or not reference.strip():
             raise ValueError("Файлы с текстом и образцом не должны быть пустыми.")
 
+        compression_percent = read_compression_percent()
         if task == "--1":
-            summary = summarize(source, TEST_COMPRESSION_PERCENT)
+            summary = summarize(source, compression_percent)
         elif task == "--4":
-            summary = summarize_with_transformer(source)
+            summary = summarize_with_transformer(source, compression_percent)
 
         output_path.write_text(summary, encoding="utf-8")
         print(summary)
@@ -294,9 +307,7 @@ def main():
             print("\nПредобученная модель:")
             print_rouge_scores(summary, reference)
             print("\nКлассический алгоритм:")
-            print_rouge_scores(
-                summarize(source, TEST_COMPRESSION_PERCENT), reference
-            )
+            print_rouge_scores(summarize(source, compression_percent), reference)
     except (OSError, UnicodeError, ValueError) as error:
         print(f"Ошибка: {error}", file=sys.stderr)
         raise SystemExit(2)
