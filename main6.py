@@ -146,7 +146,7 @@ def print_results(
     observed_parts,
     sentence_count,
 ):
-    """Печатает сводки, требуемые заданием."""
+    """Печатает сводки по переходам между частями речи и их вероятности."""
     print(f"\nОбработано предложений: {sentence_count}")
 
     print(f"\nПереходы от части речи «{NUMERAL}»:")
@@ -236,9 +236,7 @@ def main():
     try:
         paths = download_corpus()
         print(f"Файлов корпуса: {len(paths)}")
-        edge_counts, first_parts, observed_parts, sentence_count = analyze_corpus(
-            paths
-        )
+        edge_counts, first_parts, observed_parts, sentence_count = analyze_corpus(paths)
         probabilities = calculate_probabilities(edge_counts)
         print_results(
             edge_counts,
