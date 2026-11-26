@@ -1,28 +1,26 @@
-# /// script
-# dependencies = [
-#     "nltk>=3.9,<4",
-#     "protobuf>=4",
-#     "sentencepiece>=0.2",
-#     "torch>=2.0",
-#     "transformers>=4.40,<5",
-# ]
-# ///
-
-"""Простой экстрактивный реферат текста."""
-
-import argparse
 import math
 import re
+import sys
 from collections import Counter
 from pathlib import Path
+
+import torch
+from nltk.corpus import stopwords
+from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+
 
 
 REFERENCE_PATH = Path(__file__).resolve().parent / "source" / "res_ref.txt"
 SUMMARY_OUTPUT_PATH = (
     Path(__file__).resolve().parent / "source" / "cropped_text_2.txt"
 )
+# Процент исходного текста, который алгоритм старается оставить.
 TEST_COMPRESSION_PERCENT = 5
+# Русскоязычная модель T5 для абстрактивного суммирования.
 TRANSFORMER_MODEL = "cointegrated/rut5-base-absum"
+
+
 
 
 def words(text):
@@ -33,15 +31,10 @@ def words(text):
 def get_stop_words():
     """Загружает русские стоп-слова из корпуса NLTK."""
     try:
-        from nltk.corpus import stopwords
-
         return set(stopwords.words("russian"))
-    except ImportError as error:
-        raise ValueError("Запустите программу через `uv run main55.py`.") from error
     except LookupError as error:
         raise ValueError(
-            "Не найден корпус стоп-слов NLTK. Выполните: "
-            "`uv run --with nltk python -m nltk.downloader stopwords`"
+            "Не найден корпус стоп-слов NLTK."
         ) from error
 
 
@@ -69,20 +62,23 @@ def summarize(text, compression_percent):
     stop_words = get_stop_words()
 
     # Частые значимые слова помогают определить тему текста.
+    # Убираем стоп-слова; если их нет, используем все слова как запасной вариант.
     content_words = [
         word for word in all_words if word not in stop_words
     ] or all_words
     frequencies = Counter(content_words)
 
+    # Оцениваем предложение по частотам его значимых слов во всём тексте.
     scored_sentences = []
     for index, sentence in enumerate(sentences):
         tokens = words(sentence)
         significant = [word for word in tokens if word not in stop_words]
         if not significant:
             significant = tokens
-        score = sum(frequencies[word] for word in significant) / len(significant)
-        scored_sentences.append((index, sentence, len(tokens), score))
+        sentence_score = sum(frequencies[word] for word in significant) / len(significant)
+        scored_sentences.append((index, sentence, len(tokens), sentence_score))
 
+    # Объём ограничивается словами, но предложения выбираются целиком.
     target_words = max(1, math.ceil(len(all_words) * compression_percent / 100))
     selected = []
     selected_words = 0
@@ -108,6 +104,7 @@ def rouge_n(candidate, reference, n):
 
     candidate_words = words(candidate)
     reference_words = words(reference)
+    # Counter хранит число повторений каждой последовательности из n слов.
     candidate_ngrams = Counter(
         tuple(candidate_words[index:index + n])
         for index in range(len(candidate_words) - n + 1)
@@ -119,8 +116,10 @@ def rouge_n(candidate, reference, n):
 
     candidate_total = sum(candidate_ngrams.values())
     reference_total = sum(reference_ngrams.values())
+    # Пересечение учитывает совпавшие n-граммы.
     overlap = sum((candidate_ngrams & reference_ngrams).values())
 
+    # Precision — доля совпадений в реферате, recall — доля совпадений в эталоне.
     precision = overlap / candidate_total if candidate_total else 0
     recall = overlap / reference_total if reference_total else 0
     f1 = (
@@ -149,6 +148,7 @@ def split_into_chunks(text, tokenizer, max_tokens=480):
     for sentence in split_sentences(text):
         token_ids = tokenizer.encode(sentence, add_special_tokens=False)
         if len(token_ids) > max_tokens:
+            # Сначала сохраняем накопленные предложения, затем режем слишком длинное.
             if current_sentences:
                 chunks.append(" ".join(current_sentences))
                 current_sentences = []
@@ -157,6 +157,7 @@ def split_into_chunks(text, tokenizer, max_tokens=480):
                 tokenizer.decode(token_ids[start:start + max_tokens])
                 for start in range(0, len(token_ids), max_tokens)
             )
+        # Начинаем новую часть, если следующее предложение превысит лимит токенов.
         elif current_length + len(token_ids) > max_tokens:
             chunks.append(" ".join(current_sentences))
             current_sentences = [sentence]
@@ -172,17 +173,10 @@ def split_into_chunks(text, tokenizer, max_tokens=480):
 
 def summarize_with_transformer(text):
     """Создаёт реферат русскоязычной моделью T5."""
-    try:
-        import torch
-        from transformers import T5ForConditionalGeneration, T5Tokenizer
-    except ImportError as error:
-        raise ValueError(
-            "Запустите скрипт через `uv run main55.py --4 "
-            "<исходный_текст.txt> <файл_результата.txt>`."
-        ) from error
-
+    # Загружаем токенизатор и веса выбранной модели.
     tokenizer = T5Tokenizer.from_pretrained(TRANSFORMER_MODEL)
     model = T5ForConditionalGeneration.from_pretrained(TRANSFORMER_MODEL)
+    # Используем GPU, если он доступен, иначе выполняем генерацию на CPU.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
@@ -193,6 +187,7 @@ def summarize_with_transformer(text):
 
     summaries = []
     for chunk in chunks:
+        # Модель получает ориентир длины в словах; это не строгий предел.
         target_words = max(
             5, round(len(words(chunk)) * TEST_COMPRESSION_PERCENT / 100)
         )
@@ -202,6 +197,7 @@ def summarize_with_transformer(text):
             truncation=True,
             max_length=512,
         ).to(device)
+        # Режим вывода отключает вычисление градиентов и экономит память.
         with torch.inference_mode():
             output = model.generate(
                 **inputs,
@@ -210,6 +206,7 @@ def summarize_with_transformer(text):
                 do_sample=False,
                 repetition_penalty=10.0,
             )
+        # Преобразуем сгенерированные токены обратно в обычный текст.
         summary = tokenizer.decode(output[0], skip_special_tokens=True).strip()
         if summary:
             summaries.append(summary)
@@ -219,84 +216,52 @@ def summarize_with_transformer(text):
     return " ".join(summaries)
 
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Программы для заданий 1, 3 и 4.")
-    tasks = parser.add_mutually_exclusive_group(required=True)
-    for number in (1, 3, 4):
-        tasks.add_argument(
-            f"--{number}",
-            dest="task",
-            action="store_const",
-            const=number,
-            help=f"запустить задание {number}",
+    arguments = sys.argv[1:]
+    if not arguments or arguments[0] in ("-h", "--help"):
+        print(
+            "Запуск:\n"
+            "  uv run main55.py --1 <исходный_текст.txt> <образец.txt>\n"
+            "  uv run main55.py --4 <исходный_текст.txt> <файл_результата.txt>"
         )
-    parser.add_argument(
-        "files",
-        nargs="*",
-        type=Path,
-        help="для --1: исходный текст и образец; для --4: исходный текст и файл результата",
-    )
-
-    args = parser.parse_args()
-    if args.task == 1:
-        if len(args.files) != 2:
-            parser.error("для --1 укажите исходный текст и файл реферата-образца")
-        try:
-            source_path, reference_path = args.files
-            if SUMMARY_OUTPUT_PATH.resolve() in (
-                source_path.resolve(),
-                reference_path.resolve(),
-            ):
-                raise ValueError("Файл результата не должен совпадать с входным файлом.")
-            source = source_path.read_text(encoding="utf-8-sig")
-            reference = reference_path.read_text(encoding="utf-8-sig")
-            if not source.strip() or not reference.strip():
-                raise ValueError("Файлы с текстом и образцом не должны быть пустыми.")
-
-            summary = summarize(source, TEST_COMPRESSION_PERCENT)
-            SUMMARY_OUTPUT_PATH.write_text(summary, encoding="utf-8")
-            print(summary)
-            print(f"\nРеферат сохранён в: {SUMMARY_OUTPUT_PATH}")
-            print("\nМетрики для созданного реферата:")
-            print_rouge_scores(summary, reference)
-        except (OSError, UnicodeError, ValueError) as error:
-            parser.error(str(error))
         return
 
-    if args.task == 4:
-        if len(args.files) != 2:
-            parser.error("для --4 укажите исходный текст и путь для результата")
-        try:
-            source_path, output_path = args.files
-            reference_path = REFERENCE_PATH
-            if output_path.resolve() in (
-                source_path.resolve(),
-                reference_path.resolve(),
-            ):
-                raise ValueError("Файл результата не должен совпадать с входным файлом.")
-            source = source_path.read_text(encoding="utf-8-sig")
-            reference = reference_path.read_text(encoding="utf-8-sig")
-            if not source.strip() or not reference.strip():
-                raise ValueError("Файлы с текстом и образцом не должны быть пустыми.")
+    task = arguments[0]
 
-            transformer_summary = summarize_with_transformer(source)
-            output_path.write_text(transformer_summary, encoding="utf-8")
-            print(transformer_summary)
-            print(f"\nРеферат модели сохранён в: {output_path}")
+    source_path, second_path = map(Path, arguments[1:])
+    output_path = SUMMARY_OUTPUT_PATH if task == "--1" else second_path
+    reference_path = second_path if task == "--1" else REFERENCE_PATH
 
+
+    try:
+        source = source_path.read_text(encoding="utf-8-sig")
+        reference = reference_path.read_text(encoding="utf-8-sig")
+        if not source.strip() or not reference.strip():
+            raise ValueError("Файлы с текстом и образцом не должны быть пустыми.")
+
+        if task == "--1":
+            summary = summarize(source, TEST_COMPRESSION_PERCENT)
+        elif task == "--4":
+            summary = summarize_with_transformer(source)
+
+        output_path.write_text(summary, encoding="utf-8")
+        print(summary)
+        print(f"\nРеферат сохранён в: {output_path}")
+
+        if task == "--1":
+            print("\nМетрики для созданного реферата:")
+            print_rouge_scores(summary, reference)
+        elif task == "--4":
             print("\nПредобученная модель:")
-            print_rouge_scores(transformer_summary, reference)
+            print_rouge_scores(summary, reference)
             print("\nКлассический алгоритм:")
             print_rouge_scores(
                 summarize(source, TEST_COMPRESSION_PERCENT), reference
             )
-        except (OSError, UnicodeError, ValueError) as error:
-            parser.error(str(error))
-        return
-
-    if args.task == 3:
-        parser.error("задание 3 пока не реализовано")
-
+    except (OSError, UnicodeError, ValueError) as error:
+        print(f"Ошибка: {error}", file=sys.stderr)
+        raise SystemExit(2)
 
 if __name__ == "__main__":
     main()
