@@ -2,13 +2,16 @@ import math
 import re
 import sys
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 
+import pymorphy3
 import torch
 from nltk.corpus import stopwords
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 
 
+morph = pymorphy3.MorphAnalyzer()
 
 
 REFERENCE_PATH = Path(__file__).resolve().parent / "source" / "res_ref.txt"
@@ -26,6 +29,12 @@ TRANSFORMER_MODEL = "cointegrated/rut5-base-absum"
 def words(text):
     """Возвращает слова в нижнем регистре."""
     return re.findall(r"[а-яёa-z0-9]+", text.lower())
+
+
+@lru_cache(maxsize=10000)
+def lemmatize(word):
+    """Возвращает начальную форму слова; кэш ускоряет повторные разборы."""
+    return morph.parse(word)[0].normal_form
 
 
 def get_stop_words():
@@ -97,13 +106,17 @@ def summarize(text, compression_percent):
     return " ".join(sentence for _, sentence, _, _ in selected)
 
 
-def rouge_n(candidate, reference, n):
+def rouge_n(candidate, reference, n, use_lemmas=False):
     """Считает precision, recall и F1 для ROUGE-n."""
     if n < 1:
         raise ValueError("Размер n-граммы должен быть положительным.")
 
     candidate_words = words(candidate)
     reference_words = words(reference)
+    if use_lemmas:
+        candidate_words = [lemmatize(word) for word in candidate_words]
+        reference_words = [lemmatize(word) for word in reference_words]
+
     # Counter хранит число повторений каждой последовательности из n слов.
     candidate_ngrams = Counter(
         tuple(candidate_words[index:index + n])
@@ -131,11 +144,34 @@ def rouge_n(candidate, reference, n):
 
 
 def print_rouge_scores(candidate, reference):
+    name_width = 8
+    value_width = 8
+    group_width = value_width * 3 + 6
+
+    print(
+        f"{'Метрика':<{name_width}} | "
+        f"{'Словоформы':^{group_width}} | {'Леммы':^{group_width}}"
+    )
+    print(
+        f"{'':{name_width}} | "
+        f"{'P':>{value_width}} | {'R':>{value_width}} | {'F1':>{value_width}} | "
+        f"{'P':>{value_width}} | {'R':>{value_width}} | {'F1':>{value_width}}"
+    )
+    print(
+        f"{'-' * name_width}-+-{'-' * group_width}-+-{'-' * group_width}"
+    )
+
     for n in range(1, 4):
-        precision, recall, f1 = rouge_n(candidate, reference, n)
+        surface = rouge_n(candidate, reference, n)
+        lemma = rouge_n(candidate, reference, n, use_lemmas=True)
         print(
-            f"ROUGE-{n}: precision={precision:.4f}, "
-            f"recall={recall:.4f}, F1={f1:.4f}"
+            f"{f'ROUGE-{n}':<{name_width}} | "
+            f"{surface[0]:>{value_width}.4f} | "
+            f"{surface[1]:>{value_width}.4f} | "
+            f"{surface[2]:>{value_width}.4f} | "
+            f"{lemma[0]:>{value_width}.4f} | "
+            f"{lemma[1]:>{value_width}.4f} | "
+            f"{lemma[2]:>{value_width}.4f}"
         )
 
 
